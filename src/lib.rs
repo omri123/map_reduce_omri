@@ -38,23 +38,21 @@ pub fn run_map_reduce_framework<K1, V1, K2, V2, K3, V3>(map: fn(K1, V1, emit: &m
 
     init_log_system();
     info!("MapReduce called, logging system initialized.");
-
+    info!("start mapping.");
     let map_result:Vec<(K2, V2)> = execute_map(map, items_vec, number_of_threads, chunk_size);
-    info!("finished mapping");
-
+    info!("finished mapping. start shuffeling");
     let shuffled_result = shuffle_(map_result);
-
-    // --------- finished shuffling!!!----------
-
+    info!("finished shuffeling. start reduce");
     let reduce_result:Vec<(K3, V3)> = execute_reduce(shuffled_result,
                                                          reduce,number_of_threads, chunk_size);
-
     info!("finished reduce");
-
     return reduce_result;
 
 }
 
+
+/// get the shuffled data, run the reduce function.
+/// use multiple threads and communicate with them using messages.
 fn execute_reduce<K2, V2, K3, V3>(mut shuffled_result: Vec<(K2, Vec<V2>)>,
                                   reduce: fn(K2, Vec<V2>, emit: &mut FnMut(K3, V3)),
                                   number_of_threads:i32, chunk_size:usize) -> Vec<(K3, V3)>
@@ -105,6 +103,8 @@ fn execute_reduce<K2, V2, K3, V3>(mut shuffled_result: Vec<(K2, Vec<V2>)>,
     return reduce_result;
 }
 
+/// get the input data, run the map function.
+/// use multiple threads and communicate with them using messages.
 fn execute_map<K1, V1, K2, V2>(map: fn(K1, V1, emit: &mut FnMut(K2, V2)),
                 mut items_vec: Vec<(K1, V1)>, number_of_threads:i32, chunk_size:usize) -> Vec<(K2, V2)>
     where K1: std::marker::Send + PartialOrd + 'static,
@@ -156,6 +156,8 @@ fn execute_map<K1, V1, K2, V2>(map: fn(K1, V1, emit: &mut FnMut(K2, V2)),
     return map_result;
 }
 
+/// implement the shuffle stage.
+/// single - threaded.
 fn shuffle_<K2, V2>(map_result: Vec<(K2, V2)>) -> Vec<(K2, Vec<V2>)>
     where K2 : std::cmp::Eq + std::hash::Hash + std::clone::Clone,
 {
@@ -182,6 +184,7 @@ fn shuffle_<K2, V2>(map_result: Vec<(K2, V2)>) -> Vec<(K2, Vec<V2>)>
     return shuffled_result;
 }
 
+/// slice from vector while moving ownership.
 fn move_slicing<T>(src: &mut Vec<T>, slice_size: usize) -> Vec<T> {
     let mut moved_slice:Vec<T> = Vec::new();
     for _j in 0..cmp::min(slice_size, src.len()) {
@@ -190,11 +193,14 @@ fn move_slicing<T>(src: &mut Vec<T>, slice_size: usize) -> Vec<T> {
     return moved_slice;
 }
 
+/// enum that represent the map-job-message, carry the data.
 enum MapJob<K1, V1> {
     Stop,
     Work(Vec<(K1, V1)>),
 }
 
+/// worker function to run in separate thread;
+/// run the 'map' function.
 fn map_worker_function<K1, V1, K2, V2>(map: fn(K1, V1, emit: &mut FnMut(K2, V2)),
                                        rx:Receiver<MapJob<K1, V1>>, tx:Sender<(Vec<(K2, V2)>, i32)>, id: i32)
     where K1: PartialOrd + std::marker::Send,
@@ -224,11 +230,14 @@ fn map_worker_function<K1, V1, K2, V2>(map: fn(K1, V1, emit: &mut FnMut(K2, V2))
     info!("mapWorker_{} map worker finished", id);
 }
 
+/// enum that represent the reduce-job-message, carry the data.
 enum ReduceJob<K2, V2> {
     Stop,
     Work(Vec<(K2, Vec<V2>)>),
 }
 
+/// worker function to run in separate thread;
+/// run the 'reduce' function.
 fn reduce_worker_function<K2, V2, K3, V3>(reduce: fn(K2, Vec<V2>, emit: &mut FnMut(K3, V3)),
                                           rx:Receiver<ReduceJob<K2, V2>>,
                                           tx:Sender<(Vec<(K3, V3)>, i32)>, id: i32) {
@@ -254,6 +263,7 @@ fn reduce_worker_function<K2, V2, K3, V3>(reduce: fn(K2, Vec<V2>, emit: &mut FnM
     info!("reduce_worker_{} finished", id);
 }
 
+/// initialize the log system.
 fn init_log_system() {
     CombinedLogger::init(
         vec![
