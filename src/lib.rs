@@ -27,7 +27,7 @@ use std::cmp;
 ///
 pub fn run_map_reduce_framework<K1, V1, K2, V2, K3, V3>(map: fn(K1, V1, emit: &mut FnMut(K2, V2)),
                                                     reduce: fn(K2, Vec<V2>, emit: &mut FnMut(K3, V3)),
-                                                    mut items_vec: Vec<(K1, V1)>, number_of_threads:i32, chunk_size:usize) -> Vec<(K3, V3)>
+                                                    items_vec: Vec<(K1, V1)>, number_of_threads:i32, chunk_size:usize) -> Vec<(K3, V3)>
     where K1: std::marker::Send + PartialOrd + 'static,
         V1: std::marker::Send + 'static,
         K2: std::marker::Send + PartialOrd + 'static + std::cmp::Eq + std::hash::Hash + std::clone::Clone + std::fmt::Debug,
@@ -38,6 +38,80 @@ pub fn run_map_reduce_framework<K1, V1, K2, V2, K3, V3>(map: fn(K1, V1, emit: &m
 
     init_log_system();
     info!("MapReduce called, logging system initialized.");
+
+    let map_result:Vec<(K2, V2)> = execute_map(map, items_vec, number_of_threads, chunk_size);
+    info!("finished mapping");
+
+    let shuffled_result = shuffle_(map_result);
+
+    // --------- finished shuffling!!!----------
+
+    let reduce_result:Vec<(K3, V3)> = execute_reduce(shuffled_result,
+                                                         reduce,number_of_threads, chunk_size);
+
+    info!("finished reduce");
+
+    return reduce_result;
+
+}
+
+fn execute_reduce<K2, V2, K3, V3>(mut shuffled_result: Vec<(K2, Vec<V2>)>,
+                                  reduce: fn(K2, Vec<V2>, emit: &mut FnMut(K3, V3)),
+                                  number_of_threads:i32, chunk_size:usize) -> Vec<(K3, V3)>
+
+    where K2: std::marker::Send + PartialOrd + 'static + std::cmp::Eq + std::hash::Hash + std::clone::Clone + std::fmt::Debug,
+        V2: std::marker::Send + 'static + std::fmt::Display + std::fmt::Debug,
+        K3: std::marker::Send + PartialOrd + 'static,
+        V3: std::marker::Send + 'static
+{
+    let mut reduce_result:Vec<(K3, V3)> = Vec::new();
+    let (tx_worker_to_manager, rx_worker_to_manager) = mpsc::channel();
+
+    // map the thread id to the join-handle and the Sender.
+    let mut threads: HashMap<i32, (JoinHandle<()>, Sender<ReduceJob<K2, V2>>)> = HashMap::new();
+    for i in 0..number_of_threads {
+        let (tx_manager_to_worker, rx_manager_to_worker) = mpsc::channel();
+        let cloned_tx_worker_to_manager = tx_worker_to_manager.clone();
+        let handle = thread::spawn(move || { reduce_worker_function(reduce, rx_manager_to_worker, cloned_tx_worker_to_manager, i) });
+        threads.insert(i, (handle, tx_manager_to_worker));
+    }
+
+    // send first job
+    for i in 0..number_of_threads {
+        let moved_slice = move_slicing(&mut shuffled_result, chunk_size);
+        let job = ReduceJob::Work(moved_slice);
+        threads.get(&i).unwrap().1.send(job).unwrap();
+    }
+
+    // main loop
+    while !threads.is_empty() {
+        let (mut result, id) = rx_worker_to_manager.recv().unwrap();
+        reduce_result.append(&mut result); // save result in our vector
+
+        if !shuffled_result.is_empty() {
+            // send new job!!
+            let moved_slice = move_slicing(&mut shuffled_result, chunk_size);
+            let job = ReduceJob::Work(moved_slice);
+            threads.get(&id).unwrap().1.send(job).unwrap();
+        }
+        else {
+            // kill worker
+            let (id, (join_handel, sender)) = threads.remove_entry(&id).unwrap();
+            sender.send(ReduceJob::Stop).unwrap();
+            join_handel.join().expect("join failed");
+            info!("reduce_worker_{} joined seccesfully", id);
+        }
+    }
+    return reduce_result;
+}
+
+fn execute_map<K1, V1, K2, V2>(map: fn(K1, V1, emit: &mut FnMut(K2, V2)),
+                mut items_vec: Vec<(K1, V1)>, number_of_threads:i32, chunk_size:usize) -> Vec<(K2, V2)>
+    where K1: std::marker::Send + PartialOrd + 'static,
+        V1: std::marker::Send + 'static,
+        K2: std::marker::Send + PartialOrd + 'static + std::cmp::Eq + std::hash::Hash + std::clone::Clone + std::fmt::Debug,
+        V2: std::marker::Send + 'static + std::fmt::Display + std::fmt::Debug,
+{
 
     let mut map_result:Vec<(K2, V2)> = Vec::new();
     let (tx_worker_to_manager, rx_worker_to_manager) = mpsc::channel();
@@ -79,51 +153,7 @@ pub fn run_map_reduce_framework<K1, V1, K2, V2, K3, V3>(map: fn(K1, V1, emit: &m
             info!("map_worker_{} joined seccesfully", id);
         }
     }
-    info!("finished mapping");
-
-    let mut shuffled_result = shuffle_(map_result);
-
-    // --------- finished shuffling!!!----------
-
-    let mut reduce_result:Vec<(K3, V3)> = Vec::new();
-    let (tx_worker_to_manager, rx_worker_to_manager) = mpsc::channel();
-    // map the thread id to the join-handle and the Sender.
-    let mut threads: HashMap<i32, (JoinHandle<()>, Sender<ReduceJob<K2, V2>>)> = HashMap::new();
-    for i in 0..number_of_threads {
-        let (tx_manager_to_worker, rx_manager_to_worker) = mpsc::channel();
-        let cloned_tx_worker_to_manager = tx_worker_to_manager.clone();
-        let handle = thread::spawn(move || { reduce_worker_function(reduce, rx_manager_to_worker, cloned_tx_worker_to_manager, i) });
-        threads.insert(i, (handle, tx_manager_to_worker));
-    }
-    for i in 0..number_of_threads {
-        // send first job
-        let moved_slice = move_slicing(&mut shuffled_result, chunk_size);
-        let job = ReduceJob::Work(moved_slice);
-        threads.get(&i).unwrap().1.send(job).unwrap();
-    }
-
-    while !threads.is_empty() {
-        let (mut result, id) = rx_worker_to_manager.recv().unwrap();
-        reduce_result.append(&mut result); // save result in our vector
-
-        if !shuffled_result.is_empty() {
-            // send new job!!
-            let moved_slice = move_slicing(&mut shuffled_result, chunk_size);
-            let job = ReduceJob::Work(moved_slice);
-            threads.get(&id).unwrap().1.send(job).unwrap();
-        }
-        else {
-            // kill worker
-            let (id, (join_handel, sender)) = threads.remove_entry(&id).unwrap();
-            sender.send(ReduceJob::Stop).unwrap();
-            join_handel.join().expect("join failed");
-            info!("reduce_worker_{} joined seccesfully", id);
-        }
-    }
-    info!("finished reduce");
-
-    return reduce_result;
-
+    return map_result;
 }
 
 fn shuffle_<K2, V2>(map_result: Vec<(K2, V2)>) -> Vec<(K2, Vec<V2>)>

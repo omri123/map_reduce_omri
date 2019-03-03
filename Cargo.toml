@@ -1,6 +1,6 @@
 [package]
 name = "map_reduce_omri"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["omri <omri.bloch@mail.huji.ac.il>"]
 edition = "2018"
 description = "multi-thread map-reduce framework as described in https://en.wikipedia.org/wiki/MapReduce"
