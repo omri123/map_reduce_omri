@@ -1,0 +1,9 @@
+[package]
+name = "map_reduce_omri"
+version = "0.1.0"
+authors = ["omri <omri.bloch@mail.huji.ac.il>"]
+edition = "2018"
+
+[dependencies]
+simplelog = "^0.5.0"
+log = "0.4"
