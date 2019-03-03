@@ -1,8 +1,11 @@
 [package]
 name = "map_reduce_omri"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["omri <omri.bloch@mail.huji.ac.il>"]
 edition = "2018"
+description = "multi-thread map-reduce framework as described in https://en.wikipedia.org/wiki/MapReduce"
+license = "GPL-3.0"
+repository = "https://github.com/omri123/map_reduce_omri"
 
 [dependencies]
 simplelog = "^0.5.0"
