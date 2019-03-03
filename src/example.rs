@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 
-fn pub_example() {
+pub fn example() {
     let now = Instant::now();
     let args: Vec<String> = env::args().collect();
     let path_as_string = &args[1];
