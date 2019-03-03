@@ -9,14 +9,18 @@ use std::env;
 use std::path::PathBuf;
 use std::time::Instant;
 
+use map_reduce_omri;
+
 
 pub fn main() {
     let now = Instant::now();
     let args: Vec<String> = env::args().collect();
     let path_as_string = &args[1];
     let files = list_file_entries(path_as_string);
-    let _result = map_reduce::run_map_reduce_framework::<PathBuf, i32, String, i32, String, i32>(map_count_words, reduce_count_words, files, 4, 20);
-//    info!("{:?}", result);
+    let result = map_reduce_omri::run_map_reduce_framework::<PathBuf, i32, String, i32, String, i32>(map_count_words, reduce_count_words, files, 4, 20);
+    for item in result {
+        println!("{:?}", item);
+    }
     println!("elapsed {}", now.elapsed().as_secs());
 }
 
